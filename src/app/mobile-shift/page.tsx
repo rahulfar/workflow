@@ -23,8 +23,36 @@ export default function MobileShiftPage() {
 
   const checkStatus = async () => {
     try {
+      // Attempt local Wi-Fi IP detection via WebRTC
+      let localIp: string | null = null;
+      try {
+        if (typeof window !== 'undefined' && window.RTCPeerConnection) {
+          localIp = await new Promise((resolve) => {
+            const pc = new RTCPeerConnection({ iceServers: [] });
+            pc.createDataChannel('');
+            pc.createOffer().then((offer) => pc.setLocalDescription(offer)).catch(() => resolve(null));
+            let resolved = false;
+            pc.onicecandidate = (ice) => {
+              if (!ice || !ice.candidate || !ice.candidate.candidate) {
+                if (!resolved) { resolved = true; resolve(null); }
+                return;
+              }
+              const match = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(ice.candidate.candidate);
+              if (match && match[1]) {
+                resolved = true;
+                resolve(match[1]);
+              }
+            };
+            setTimeout(() => { if (!resolved) { resolved = true; resolve(null); } }, 800);
+          });
+        }
+      } catch (rtcErr) {
+        // Ignore WebRTC fallback
+      }
+
+      const ipQuery = localIp ? `&client_ip=${encodeURIComponent(localIp)}` : '';
       const [ipRes, shiftRes] = await Promise.all([
-        fetch('/api/attendance?action=check_ip'),
+        fetch(`/api/attendance?action=check_ip${ipQuery}`),
         fetch('/api/attendance?action=status'),
       ]);
 
@@ -32,7 +60,7 @@ export default function MobileShiftPage() {
         const ipData = await ipRes.json();
         setIpStatus({
           allowed: ipData.allowed ?? false,
-          clientIp: ipData.client_ip || ipData.ip || 'Unknown',
+          clientIp: localIp || ipData.client_ip || ipData.ip || 'Unknown',
           message: ipData.message,
         });
       }

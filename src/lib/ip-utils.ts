@@ -50,12 +50,15 @@ export async function checkClientIpAuthorized(clientIp?: string): Promise<{
     return { authorized: true, ip: detectedIp, location: 'Local Loopback' };
   }
 
-  // Built-in Office IPs (192.168.1.22 specified by user, office subnets)
+  // Built-in Office IPs (192.168.1.22 specified by user, office subnets, office public Wi-Fi)
   const defaultOfficeIps = [
-    { ip: '192.168.1.22', location: 'Office Primary Wi-Fi' },
+    { ip: '192.168.1.22', location: 'Office Primary Wi-Fi (192.168.1.22)' },
     { ip: '192.168.1.*', location: 'Office Subnet 192.168.1.x' },
     { ip: '192.168.29.174', location: 'Office Fiber Gateway' },
     { ip: '192.168.29.*', location: 'Office Subnet 192.168.29.x' },
+    { ip: '192.168.50.*', location: 'Office Meeting Room' },
+    { ip: '106.219.*', location: 'Office Public Wi-Fi Pool' },
+    { ip: '2401:4900:*', location: 'Office Public IPv6 Pool' },
   ];
 
   for (const def of defaultOfficeIps) {

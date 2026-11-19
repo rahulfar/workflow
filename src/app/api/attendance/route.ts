@@ -8,8 +8,9 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const action = url.searchParams.get('action') || 'status';
+    const queryIp = url.searchParams.get('ip') || url.searchParams.get('client_ip');
 
-    const clientIp = await getClientIp();
+    const clientIp = queryIp || (await getClientIp());
     const ipAuth = await checkClientIpAuthorized(clientIp);
 
     // If only checking Wi-Fi IP authorization
