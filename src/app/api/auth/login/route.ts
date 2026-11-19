@@ -6,7 +6,7 @@ import { verifyPassword, createSession } from '@/lib/auth';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const role = body.role || body.selected_role;
+    const role = (body.role || body.selected_role || '').toLowerCase();
     const username = body.username || body.email;
     const password = body.password;
 
@@ -22,6 +22,50 @@ export async function POST(req: Request) {
 
     try {
       await connectToDatabase();
+
+      // Auto-seed initial users if MongoDB collection is empty
+      const userCount = await User.countDocuments();
+      if (userCount === 0) {
+        console.log('MongoDB users collection is empty. Auto-seeding from database/mongodb_seed_data.json...');
+        try {
+          const fs = await import('fs');
+          const path = await import('path');
+          const seedPath = path.join(process.cwd(), 'database', 'mongodb_seed_data.json');
+          if (fs.existsSync(seedPath)) {
+            const raw = fs.readFileSync(seedPath, 'utf8');
+            const seedData = JSON.parse(raw);
+            const seedUsers = (seedData.users || []).map((u: any) => {
+              const roleId = Number(u.role_id);
+              const roleCategory = roleId === 1 ? 'admin' : (roleId === 2 ? 'manager' : (roleId === 3 ? 'product_manager' : 'employee'));
+              return {
+                sql_id: u.id,
+                name: u.name,
+                email: u.email?.toLowerCase().trim(),
+                username: u.username?.toLowerCase().trim(),
+                password: u.password || u.password_hash,
+                role_id: roleId,
+                role_category: roleCategory,
+                role_title: u.designation || 'Staff',
+                department_id: u.department_id || 1,
+                department_name: 'Engineering',
+                employee_code: u.employee_code,
+                designation: u.designation,
+                shift_timing: u.shift_timing || '09:40 AM - 06:30 PM (Fixed Office)',
+                avatar: u.avatar || 'default_avatar.png',
+                phone: u.phone,
+                status: u.status || 'active',
+              };
+            });
+            if (seedUsers.length > 0) {
+              await User.insertMany(seedUsers);
+              console.log(`Auto-seeded ${seedUsers.length} users into MongoDB!`);
+            }
+          }
+        } catch (seedErr) {
+          console.error('Auto-seed error:', seedErr);
+        }
+      }
+
       user = await User.findOne({
         $or: [
           { email: cleanUsername },
@@ -73,9 +117,15 @@ export async function POST(req: Request) {
     }
 
     // Role category guard
-    if (user.role_category !== role) {
+    const userRole = user.role_category || (user.role_id === 1 ? 'admin' : (user.role_id === 2 ? 'manager' : (user.role_id === 3 ? 'product_manager' : 'employee')));
+    
+    // Allow admin to access any role portal, otherwise ensure role matches
+    if (userRole !== 'admin' && userRole !== role) {
       return NextResponse.json(
-        { success: false, message: `This account does not have access to the ${role.toUpperCase()} portal.` },
+        { 
+          success: false, 
+          message: `This account is assigned to the ${userRole.replace('_', ' ').toUpperCase()} role. Please select "${userRole.replace('_', ' ').toUpperCase()}" on the login card to sign in.` 
+        },
         { status: 403 }
       );
     }
@@ -91,16 +141,16 @@ export async function POST(req: Request) {
 
     // Determine dashboard redirect
     let redirect = '/employee/dashboard';
-    if (user.role_category === 'admin') redirect = '/admin/dashboard';
-    else if (user.role_category === 'manager') redirect = '/manager/dashboard';
-    else if (user.role_category === 'product_manager') redirect = '/product-manager/dashboard';
+    if (userRole === 'admin') redirect = '/admin/dashboard';
+    else if (userRole === 'manager') redirect = '/manager/dashboard';
+    else if (userRole === 'product_manager') redirect = '/product-manager/dashboard';
 
     await createSession({
       id: user._id.toString(),
       sql_id: user.sql_id,
       name: user.name,
       email: user.email,
-      role: user.role_category,
+      role: userRole,
       role_title: user.role_title || user.designation || 'Staff',
       department_name: user.department_name,
       avatar: user.avatar,
@@ -114,7 +164,7 @@ export async function POST(req: Request) {
         user: {
           name: user.name,
           email: user.email,
-          role: user.role_category,
+          role: userRole,
         },
       },
     });

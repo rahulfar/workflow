@@ -1,9 +1,27 @@
 import mongoose from 'mongoose';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/workflow_pro';
-
-if (!MONGODB_URI) {
-  throw new Error('Please define the MONGODB_URI environment variable inside .env.local');
+export function getMongoUri(): string {
+  // 1. Highest priority: User's connected database from Vercel Integration Store
+  if (process.env.MY_WORKFLOW_MONGODB_URI) {
+    return process.env.MY_WORKFLOW_MONGODB_URI;
+  }
+  // 2. Any other integration store connection variable
+  for (const [key, val] of Object.entries(process.env)) {
+    if (key.endsWith('_MONGODB_URI') && val) {
+      return val;
+    }
+  }
+  // 3. Fallback to MONGODB_URI (ignore placeholder if present)
+  if (process.env.MONGODB_URI && !process.env.MONGODB_URI.includes('cluster0.workflow.mongodb.net')) {
+    return process.env.MONGODB_URI;
+  }
+  if (process.env.MONGODB_URL) {
+    return process.env.MONGODB_URL;
+  }
+  if (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('mongodb')) {
+    return process.env.DATABASE_URL;
+  }
+  return process.env.MONGODB_URI || 'mongodb://localhost:27017/workflow_pro';
 }
 
 interface MongooseCache {
@@ -26,15 +44,18 @@ export async function connectToDatabase(): Promise<typeof mongoose> {
     return cached.conn;
   }
 
+  const uri = getMongoUri();
+
   if (!cached.promise) {
     const opts = {
       bufferCommands: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 2500,
-      connectTimeoutMS: 2500,
+      serverSelectionTimeoutMS: 3000,
+      connectTimeoutMS: 3000,
     };
 
-    cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongooseInstance) => {
+    cached.promise = mongoose.connect(uri, opts).then((mongooseInstance) => {
+      console.log(`Connected to MongoDB successfully: ${uri.replace(/:([^:@]{3,})@/, ':****@')}`);
       return mongooseInstance;
     });
   }
