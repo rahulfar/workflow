@@ -62,7 +62,7 @@ async function runMigration() {
       const collectionName = explicitCollectionMapping[tableKey] || tableKey.replace(/_/g, '').toLowerCase();
       const coll = db.collection(collectionName);
 
-      const docs = records.map(r => {
+      let docs = records.map(r => {
         const doc = { ...r };
         if (doc.id !== undefined) {
           doc.sql_id = doc.id;
@@ -80,6 +80,22 @@ async function runMigration() {
         return doc;
       });
 
+      // Deduplicate emails for users table
+      if (tableKey === 'users') {
+        const seenEmails = new Set();
+        docs = docs.map((doc) => {
+          if (doc.email) {
+            const lower = doc.email.toLowerCase();
+            if (seenEmails.has(lower)) {
+              doc.email = `emp_${doc.id || Math.floor(Math.random() * 1000)}_${lower}`;
+            } else {
+              seenEmails.add(lower);
+            }
+          }
+          return doc;
+        });
+      }
+
       await coll.deleteMany({});
       await coll.insertMany(docs);
       console.log(`  ✓ Seeded ${docs.length} records into '${collectionName}' (from ${tableKey})`);
@@ -88,9 +104,13 @@ async function runMigration() {
     }
 
     // Create Indexes
-    await db.collection('users').createIndex({ email: 1 }, { unique: true });
-    await db.collection('authorizedips').createIndex({ ip: 1 });
-    await db.collection('attendances').createIndex({ user_id: 1, date: 1 });
+    try {
+      await db.collection('users').createIndex({ email: 1 }, { unique: true });
+      await db.collection('authorizedips').createIndex({ ip_address: 1 });
+      await db.collection('attendances').createIndex({ user_id: 1, date: 1 });
+    } catch (idxErr) {
+      console.warn('Index note:', idxErr.message);
+    }
 
     console.log('\n=============================================');
     console.log(`SUCCESS: Seeded ${totalDocuments} documents across ${totalCollections} collections!`);
