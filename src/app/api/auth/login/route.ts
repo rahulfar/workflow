@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import connectToDatabase from '@/lib/mongodb';
 import User from '@/models/User';
 import { verifyPassword, createSession } from '@/lib/auth';
+import { ensureUsersSeeded, getStaticSeedData } from '@/lib/seed';
 
 export async function POST(req: Request) {
   try {
@@ -22,49 +23,7 @@ export async function POST(req: Request) {
 
     try {
       await connectToDatabase();
-
-      // Auto-seed initial users if MongoDB collection is empty
-      const userCount = await User.countDocuments();
-      if (userCount === 0) {
-        console.log('MongoDB users collection is empty. Auto-seeding from database/mongodb_seed_data.json...');
-        try {
-          const fs = await import('fs');
-          const path = await import('path');
-          const seedPath = path.join(process.cwd(), 'database', 'mongodb_seed_data.json');
-          if (fs.existsSync(seedPath)) {
-            const raw = fs.readFileSync(seedPath, 'utf8');
-            const seedData = JSON.parse(raw);
-            const seedUsers = (seedData.users || []).map((u: any) => {
-              const roleId = Number(u.role_id);
-              const roleCategory = roleId === 1 ? 'admin' : (roleId === 2 ? 'manager' : (roleId === 3 ? 'product_manager' : 'employee'));
-              return {
-                sql_id: u.id,
-                name: u.name,
-                email: u.email?.toLowerCase().trim(),
-                username: u.username?.toLowerCase().trim(),
-                password: u.password || u.password_hash,
-                role_id: roleId,
-                role_category: roleCategory,
-                role_title: u.designation || 'Staff',
-                department_id: u.department_id || 1,
-                department_name: 'Engineering',
-                employee_code: u.employee_code,
-                designation: u.designation,
-                shift_timing: u.shift_timing || '09:40 AM - 06:30 PM (Fixed Office)',
-                avatar: u.avatar || 'default_avatar.png',
-                phone: u.phone,
-                status: u.status || 'active',
-              };
-            });
-            if (seedUsers.length > 0) {
-              await User.insertMany(seedUsers);
-              console.log(`Auto-seeded ${seedUsers.length} users into MongoDB!`);
-            }
-          }
-        } catch (seedErr) {
-          console.error('Auto-seed error:', seedErr);
-        }
-      }
+      await ensureUsersSeeded();
 
       user = await User.findOne({
         $or: [
@@ -75,34 +34,40 @@ export async function POST(req: Request) {
         status: 'active',
       });
     } catch (dbErr: any) {
-      console.warn('MongoDB connecting fallback to database seed file:', dbErr?.message);
-      // Fallback to database seed file if remote MongoDB is pending configuration
+      console.warn('MongoDB query warning, using bundled seed data fallback:', dbErr?.message);
+    }
+
+    // Fallback to static bundled seed data if user wasn't found in DB
+    if (!user) {
       try {
-        const fs = await import('fs');
-        const path = await import('path');
-        const seedPath = path.join(process.cwd(), 'database', 'mongodb_seed_data.json');
-        if (fs.existsSync(seedPath)) {
-          const raw = fs.readFileSync(seedPath, 'utf8');
-          const seedData = JSON.parse(raw);
-          const match = (seedData.users || []).find((u: any) =>
-            (u.email?.toLowerCase() === cleanUsername || u.username?.toLowerCase() === cleanUsername || u.name?.toLowerCase() === cleanUsername) &&
-            u.status === 'active'
-          );
-          if (match) {
-            const roleId = Number(match.role_id);
-            const roleCategory = roleId === 1 ? 'admin' : (roleId === 2 ? 'manager' : (roleId === 3 ? 'product_manager' : 'employee'));
-            user = {
-              _id: match.id || 1,
-              sql_id: match.id,
-              name: match.name,
-              email: match.email,
-              role_category: roleCategory,
-              role_title: match.designation || 'Staff',
-              department_name: 'General',
-              avatar: match.avatar,
-              password: match.password || match.password_hash,
-            };
-          }
+        const seedData = getStaticSeedData();
+        const match = (seedData.users || []).find((u: any) =>
+          (u.email?.toLowerCase() === cleanUsername ||
+            u.username?.toLowerCase() === cleanUsername ||
+            u.name?.toLowerCase() === cleanUsername) &&
+          u.status === 'active'
+        );
+        if (match) {
+          const roleId = Number(match.role_id);
+          const roleCategory =
+            roleId === 1
+              ? 'admin'
+              : roleId === 2
+              ? 'manager'
+              : roleId === 3
+              ? 'product_manager'
+              : 'employee';
+          user = {
+            _id: match.id || 1,
+            sql_id: match.id,
+            name: match.name,
+            email: match.email,
+            role_category: roleCategory,
+            role_title: match.designation || 'Staff',
+            department_name: 'General',
+            avatar: match.avatar,
+            password: match.password || match.password_hash,
+          };
         }
       } catch (seedErr) {
         console.error('Seed fallback error:', seedErr);
@@ -117,21 +82,33 @@ export async function POST(req: Request) {
     }
 
     // Role category guard
-    const userRole = user.role_category || (user.role_id === 1 ? 'admin' : (user.role_id === 2 ? 'manager' : (user.role_id === 3 ? 'product_manager' : 'employee')));
-    
+    const userRole =
+      user.role_category ||
+      (user.role_id === 1
+        ? 'admin'
+        : user.role_id === 2
+        ? 'manager'
+        : user.role_id === 3
+        ? 'product_manager'
+        : 'employee');
+
     // Allow admin to access any role portal, otherwise ensure role matches
     if (userRole !== 'admin' && userRole !== role) {
       return NextResponse.json(
-        { 
-          success: false, 
-          message: `This account is assigned to the ${userRole.replace('_', ' ').toUpperCase()} role. Please select "${userRole.replace('_', ' ').toUpperCase()}" on the login card to sign in.` 
+        {
+          success: false,
+          message: `This account is assigned to the ${userRole
+            .replace('_', ' ')
+            .toUpperCase()} role. Please select "${userRole
+            .replace('_', ' ')
+            .toUpperCase()}" on the login card to sign in.`,
         },
         { status: 403 }
       );
     }
 
-    // Verify password
-    const isPasswordValid = verifyPassword(password, user.password || '');
+    // Validate password
+    const isPasswordValid = verifyPassword(password, user.password);
     if (!isPasswordValid) {
       return NextResponse.json(
         { success: false, message: 'Invalid username or password.' },
@@ -168,9 +145,10 @@ export async function POST(req: Request) {
         },
       },
     });
-  } catch (error: any) {
+  } catch (err: any) {
+    console.error('Login error:', err);
     return NextResponse.json(
-      { success: false, message: 'Server error: ' + error.message },
+      { success: false, message: err.message || 'Internal server error' },
       { status: 500 }
     );
   }
