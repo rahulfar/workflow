@@ -94,10 +94,23 @@ export default function LoginPage() {
         throw new Error(data.message || 'Authentication failed. Please verify your credentials.');
       }
 
-      setSuccess(`Welcome back, ${data.data.name || 'User'}! Redirecting...`);
+      const userName = data.data?.user?.name || data.data?.name || 'User';
+      const redirectUrl = data.data?.redirect || '/dashboard';
+
+      if (data.data?.token) {
+        try {
+          localStorage.setItem('workflow_user', JSON.stringify(data.data.user));
+          localStorage.setItem('workflow_token', data.data.token);
+          // Set client-side cookies for immediate browser navigation
+          document.cookie = `workflow_token=${data.data.token}; path=/; max-age=604800; SameSite=Lax`;
+          document.cookie = `auth_token=${data.data.token}; path=/; max-age=604800; SameSite=Lax`;
+        } catch (storageErr) {}
+      }
+
+      setSuccess(`Welcome back, ${userName}! Redirecting to dashboard...`);
       setTimeout(() => {
-        router.push(data.data.redirect || '/dashboard');
-      }, 700);
+        window.location.href = redirectUrl;
+      }, 350);
     } catch (err: any) {
       setError(err.message || 'Connection error. Please try again.');
     } finally {

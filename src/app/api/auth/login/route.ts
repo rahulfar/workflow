@@ -122,7 +122,7 @@ export async function POST(req: Request) {
     else if (userRole === 'manager') redirect = '/manager/dashboard';
     else if (userRole === 'product_manager') redirect = '/product-manager/dashboard';
 
-    await createSession({
+    const token = await createSession({
       id: user._id.toString(),
       sql_id: user.sql_id,
       name: user.name,
@@ -133,11 +133,12 @@ export async function POST(req: Request) {
       avatar: user.avatar,
     });
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       message: 'Login successful!',
       data: {
         redirect,
+        token,
         user: {
           name: user.name,
           email: user.email,
@@ -145,6 +146,18 @@ export async function POST(req: Request) {
         },
       },
     });
+
+    const cookieOpts = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax' as const,
+      maxAge: 7 * 24 * 60 * 60,
+      path: '/',
+    };
+    response.cookies.set('workflow_token', token, cookieOpts);
+    response.cookies.set('auth_token', token, cookieOpts);
+
+    return response;
   } catch (err: any) {
     console.error('Login error:', err);
     return NextResponse.json(

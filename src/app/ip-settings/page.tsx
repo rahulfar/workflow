@@ -1,14 +1,11 @@
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { getSessionUser } from '@/lib/auth';
+import { getSession } from '@/lib/auth';
 import Navbar from '@/components/Navbar';
 import Sidebar from '@/components/Sidebar';
 import { ShieldCheck, Plus, Wifi, Trash2, CheckCircle2 } from 'lucide-react';
 
 export default async function IpSettingsPage() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get('auth_token')?.value;
-  const user = token ? await getSessionUser(token) : null;
+  const user = await getSession();
 
   if (!user || (user.role !== 'admin' && user.role !== 'manager')) {
     redirect('/dashboard');
