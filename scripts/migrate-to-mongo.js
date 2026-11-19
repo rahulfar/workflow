@@ -1,6 +1,6 @@
 /**
- * MongoDB Data Importer & Seeder
- * Reads database/mongodb_seed_data.json and seeds MongoDB collections
+ * MongoDB Data Importer & Seeder - WorkFlow Pro
+ * Reads database/mongodb_seed_data.json and seeds all 51 collections into MongoDB
  */
 const { MongoClient } = require('mongodb');
 const fs = require('fs');
@@ -26,38 +26,49 @@ async function runMigration() {
     const raw = fs.readFileSync(SEED_FILE, 'utf8');
     const data = JSON.parse(raw);
 
-    const mapping = [
-      { key: 'roles', collection: 'roles' },
-      { key: 'departments', collection: 'departments' },
-      { key: 'users', collection: 'users' },
-      { key: 'authorized_ips', collection: 'authorizedips' },
-      { key: 'shift_settings', collection: 'shiftsettings' },
-      { key: 'tasks', collection: 'tasks' },
-      { key: 'projects', collection: 'projects' },
-      { key: 'attendance', collection: 'attendances' },
-      { key: 'chat_messages', collection: 'chatmessages' },
-      { key: 'meetings', collection: 'meetings' },
-      { key: 'leave_requests', collection: 'leaverequests' },
-      { key: 'activity_logs', collection: 'activitylogs' },
-      { key: 'notifications', collection: 'notifications' },
-      { key: 'settings', collection: 'settings' }
-    ];
+    const explicitCollectionMapping = {
+      'roles': 'roles',
+      'departments': 'departments',
+      'users': 'users',
+      'authorized_ips': 'authorizedips',
+      'shift_settings': 'shiftsettings',
+      'tasks': 'tasks',
+      'projects': 'projects',
+      'attendance': 'attendances',
+      'chat_messages': 'chatmessages',
+      'meetings': 'meetings',
+      'leave_requests': 'leaverequests',
+      'activity_logs': 'activitylogs',
+      'notifications': 'notifications',
+      'settings': 'settings',
+      'payrolls': 'payrolls',
+      'clients': 'clients',
+      'services': 'services',
+      'holidays': 'holidays',
+      'emergency_task_requests': 'emergencytaskrequests',
+      'task_flags': 'taskflags',
+      'employees': 'employees',
+      'employee_profiles': 'employeeprofiles',
+      'employee_salaries': 'employeesalaries',
+      'ai_action_plans': 'aiactionplans'
+    };
 
-    for (const m of mapping) {
-      const records = data[m.key] || [];
-      if (records.length === 0) continue;
+    let totalCollections = 0;
+    let totalDocuments = 0;
 
-      const coll = db.collection(m.collection);
-      console.log(`Migrating ${records.length} records into '${m.collection}'...`);
+    for (const [tableKey, records] of Object.entries(data)) {
+      if (!records || records.length === 0) continue;
 
-      // Transform record sql_id
+      const collectionName = explicitCollectionMapping[tableKey] || tableKey.replace(/_/g, '').toLowerCase();
+      const coll = db.collection(collectionName);
+
       const docs = records.map(r => {
         const doc = { ...r };
         if (doc.id !== undefined) {
           doc.sql_id = doc.id;
         }
         // Normalize role_category for users
-        if (m.key === 'users') {
+        if (tableKey === 'users') {
           if (!doc.role_category) {
             const roleId = Number(doc.role_id);
             if (roleId === 1) doc.role_category = 'admin';
@@ -69,14 +80,20 @@ async function runMigration() {
         return doc;
       });
 
-      // Clear existing and insert
       await coll.deleteMany({});
       await coll.insertMany(docs);
-      console.log(`  ✓ Inserted ${docs.length} into '${m.collection}'`);
+      console.log(`  ✓ Seeded ${docs.length} records into '${collectionName}' (from ${tableKey})`);
+      totalCollections++;
+      totalDocuments += docs.length;
     }
 
+    // Create Indexes
+    await db.collection('users').createIndex({ email: 1 }, { unique: true });
+    await db.collection('authorizedips').createIndex({ ip: 1 });
+    await db.collection('attendances').createIndex({ user_id: 1, date: 1 });
+
     console.log('\n=============================================');
-    console.log('MONGODB SEEDING COMPLETED SUCCESSFULLY!');
+    console.log(`SUCCESS: Seeded ${totalDocuments} documents across ${totalCollections} collections!`);
     console.log('=============================================');
   } catch (err) {
     console.error('Migration error:', err);

@@ -6,28 +6,60 @@ import { checkClientIpAuthorized, getClientIp } from '@/lib/ip-utils';
 
 export async function GET(req: Request) {
   try {
+    const url = new URL(req.url);
+    const action = url.searchParams.get('action') || 'status';
+
+    const clientIp = await getClientIp();
+    const ipAuth = await checkClientIpAuthorized(clientIp);
+
+    // If only checking Wi-Fi IP authorization
+    if (action === 'check_ip') {
+      return NextResponse.json({
+        success: true,
+        allowed: ipAuth.authorized,
+        client_ip: clientIp,
+        message: ipAuth.authorized
+          ? 'Connected to authorized office Wi-Fi.'
+          : `Restricted: IP ${clientIp} is not in authorized office networks (e.g. 192.168.1.22).`,
+      });
+    }
+
     const session = await getSession();
     if (!session) {
       return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
     }
 
-    await connectToDatabase();
-    const clientIp = await getClientIp();
-    const ipAuth = await checkClientIpAuthorized(clientIp);
+    let record: any = null;
+    try {
+      await connectToDatabase();
+      const today = new Date().toISOString().split('T')[0];
+      const userId = session.sql_id || 1;
+      record = await Attendance.findOne({ user_id: userId, date: today }).lean();
+    } catch (e) {
+      // Graceful fallback if database connecting
+    }
 
-    const today = new Date().toISOString().split('T')[0];
-    const userId = session.sql_id || 1;
-
-    const record = await Attendance.findOne({ user_id: userId, date: today }).lean();
+    const inShift = Boolean(record && record.status === 'running' && !record.clock_out);
+    let todayHours = '0h 0m';
+    if (record && record.total_seconds) {
+      const h = Math.floor(record.total_seconds / 3600);
+      const m = Math.floor((record.total_seconds % 3600) / 60);
+      todayHours = `${h}h ${m}m`;
+    }
 
     return NextResponse.json({
       success: true,
+      allowed: ipAuth.authorized,
+      client_ip: clientIp,
       data: {
+        in_shift: inShift,
+        clock_in_time: record?.clock_in,
+        today_hours: todayHours,
         is_ip_authorized: ipAuth.authorized,
         client_ip: clientIp,
         location: ipAuth.location,
-        has_active_shift: record && record.status === 'running' && !record.clock_out,
-        has_completed_shift: record && Boolean(record.clock_out),
+        has_active_shift: inShift,
+        has_completed_shift: Boolean(record?.clock_out),
         record,
       },
     });

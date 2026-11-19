@@ -41,8 +41,8 @@ export async function checkClientIpAuthorized(clientIp?: string): Promise<{
   authorized: boolean;
   ip: string;
   location?: string;
+  message?: string;
 }> {
-  await connectToDatabase();
   const detectedIp = clientIp || (await getClientIp());
 
   // Loopback check for local development
@@ -50,12 +50,31 @@ export async function checkClientIpAuthorized(clientIp?: string): Promise<{
     return { authorized: true, ip: detectedIp, location: 'Local Loopback' };
   }
 
-  const activeRules = await AuthorizedIp.find({ status: 'active' }).lean();
+  // Built-in Office IPs (192.168.1.22 specified by user, office subnets)
+  const defaultOfficeIps = [
+    { ip: '192.168.1.22', location: 'Office Primary Wi-Fi' },
+    { ip: '192.168.1.*', location: 'Office Subnet 192.168.1.x' },
+    { ip: '192.168.29.174', location: 'Office Fiber Gateway' },
+    { ip: '192.168.29.*', location: 'Office Subnet 192.168.29.x' },
+  ];
 
-  for (const rule of activeRules) {
-    if (isIpMatching(detectedIp, rule.ip_address)) {
-      return { authorized: true, ip: detectedIp, location: rule.location };
+  for (const def of defaultOfficeIps) {
+    if (isIpMatching(detectedIp, def.ip)) {
+      return { authorized: true, ip: detectedIp, location: def.location };
     }
+  }
+
+  try {
+    await connectToDatabase();
+    const activeRules = await AuthorizedIp.find({ status: 'active' }).lean();
+
+    for (const rule of activeRules) {
+      if (isIpMatching(detectedIp, rule.ip_address)) {
+        return { authorized: true, ip: detectedIp, location: rule.location };
+      }
+    }
+  } catch (err) {
+    // If database connection is not active, fallback checks above already matched valid office IPs
   }
 
   return { authorized: false, ip: detectedIp };

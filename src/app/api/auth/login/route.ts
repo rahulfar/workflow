@@ -6,7 +6,9 @@ import { verifyPassword, createSession } from '@/lib/auth';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { role, username, password } = body;
+    const role = body.role || body.selected_role;
+    const username = body.username || body.email;
+    const password = body.password;
 
     if (!role || !username || !password) {
       return NextResponse.json(
@@ -15,18 +17,53 @@ export async function POST(req: Request) {
       );
     }
 
-    await connectToDatabase();
-
     const cleanUsername = String(username).trim().toLowerCase();
+    let user: any = null;
 
-    const user = await User.findOne({
-      $or: [
-        { email: cleanUsername },
-        { username: cleanUsername },
-        { name: new RegExp(`^${cleanUsername}$`, 'i') },
-      ],
-      status: 'active',
-    });
+    try {
+      await connectToDatabase();
+      user = await User.findOne({
+        $or: [
+          { email: cleanUsername },
+          { username: cleanUsername },
+          { name: new RegExp(`^${cleanUsername}$`, 'i') },
+        ],
+        status: 'active',
+      });
+    } catch (dbErr: any) {
+      console.warn('MongoDB connecting fallback to database seed file:', dbErr?.message);
+      // Fallback to database seed file if remote MongoDB is pending configuration
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const seedPath = path.join(process.cwd(), 'database', 'mongodb_seed_data.json');
+        if (fs.existsSync(seedPath)) {
+          const raw = fs.readFileSync(seedPath, 'utf8');
+          const seedData = JSON.parse(raw);
+          const match = (seedData.users || []).find((u: any) =>
+            (u.email?.toLowerCase() === cleanUsername || u.username?.toLowerCase() === cleanUsername || u.name?.toLowerCase() === cleanUsername) &&
+            u.status === 'active'
+          );
+          if (match) {
+            const roleId = Number(match.role_id);
+            const roleCategory = roleId === 1 ? 'admin' : (roleId === 2 ? 'manager' : (roleId === 3 ? 'product_manager' : 'employee'));
+            user = {
+              _id: match.id || 1,
+              sql_id: match.id,
+              name: match.name,
+              email: match.email,
+              role_category: roleCategory,
+              role_title: match.designation || 'Staff',
+              department_name: 'General',
+              avatar: match.avatar,
+              password: match.password || match.password_hash,
+            };
+          }
+        }
+      } catch (seedErr) {
+        console.error('Seed fallback error:', seedErr);
+      }
+    }
 
     if (!user) {
       return NextResponse.json(
